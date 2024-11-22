@@ -3,10 +3,19 @@ from tkinter import ttk
 from task_page1 import TaskPage1
 from task_page2 import TaskPage2
 from task_page3 import TaskPage3
-from task_page import TaskPage
+from task4 import TaskPage4
+from task_page6 import TaskPage6
+
+
+class DSPTasksPage(tk.Frame):
+    def __init__(self, parent, task_name):
+        super().__init__(parent, bg="#FFFFFF")
+
+        # Add a label to the DSP Tasks page
+        label = tk.Label(self, text="DSP TASKS", font=("Helvetica", 50, "bold"), bg="#FFFFFF")
+        label.pack(expand=True)
 
 class TaskApp(tk.Tk):
-
     def __init__(self):
         super().__init__()
 
@@ -30,20 +39,29 @@ class TaskApp(tk.Tk):
         self.frames = {}
 
         # List of tasks
-        tasks = ["Load & Generate Signal", "Arithmetic Operations"]
+        tasks = ["DSP_TASKS", "Load & Generate Signal", "Arithmetic Operations", "Quantization", "Frequency Domain", "Convolution & Correlation"]
 
-        # Create task list
+        # Create task list on the left side
         self.create_task_list(tasks)
 
-        # Create a page for each task
+        # Create a page for each task and store it in the dictionary
         for task in tasks:
-            if task == "Load & Generate Signal":
+            if task == "DSP_TASKS":
+                page = DSPTasksPage(self.task_detail_frame, task)
+            elif task == "Load & Generate Signal":
                 page = TaskPage1(self.task_detail_frame, task)
             elif task == "Arithmetic Operations":
                 page = TaskPage2(self.task_detail_frame, task)
-            else:
-                page = TaskPage(self.task_detail_frame, task)
+            elif task == "Quantization":
+                page = TaskPage3(self.task_detail_frame, task)
+            elif task == "Frequency Domain":
+                page = TaskPage4(self.task_detail_frame, task)
+            elif task == "Convolution & Correlation":
+                page = TaskPage6(self.task_detail_frame, task)
             self.frames[task] = page
+
+        # Show the DSP Tasks page initially
+        self.show_task_details("DSP_TASKS")
 
         # Set the protocol for closing the window
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -58,19 +76,20 @@ class TaskApp(tk.Tk):
             button.pack(pady=10, padx=10, fill='x')
 
     def show_task_details(self, task_name):
+        # Hide all task frames
         for frame in self.frames.values():
             frame.pack_forget()
 
-        self.frames[task_name].pack(fill="both", expand=True)
+        # Show the selected task frame
+        if task_name in self.frames:
+            self.frames[task_name].pack(fill="both", expand=True)
 
     def on_closing(self):
         self.destroy()
 
 if __name__ == "__main__":
     app = TaskApp()
-
     style = ttk.Style()
     style.theme_use('clam')
     style.configure('TButton', font=('Helvetica', 14), padding=10, background='#3498DB', foreground='#FFFFFF')
-
     app.mainloop()
