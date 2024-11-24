@@ -3,6 +3,7 @@ from tkinter import ttk, filedialog, messagebox
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from task_page2 import SignalSamplesAreEqual
 
 
 class TaskPage6(tk.Frame):
@@ -50,11 +51,20 @@ class TaskPage6(tk.Frame):
         correlation_label = tk.Label(right_frame, text="Correlation", font=("Helvetica", 20, "bold"), bg="#FFFFFF")
         correlation_label.pack(pady=10)
 
-        correlate_button = ttk.Button(right_frame, text="Compute Correlation", command=self.compute_normalized_cross_correlation)
+        correlate_button = ttk.Button(right_frame, text="Compute Correlation", command=self.compute_cross_correlation)
         correlate_button.pack(pady=10)
 
         self.correlation_plot_area = tk.Frame(right_frame, bg="#FFFFFF")
         self.correlation_plot_area.pack(fill="both", expand=True)
+
+        remove_dc_component_label = tk.Label(right_frame, text="Remove the DC component", font=("Helvetica", 20, "bold"), bg="#FFFFFF")
+        remove_dc_component_label.pack(pady=10)
+
+        remove_dc_component_button = ttk.Button(right_frame, text="Compute the DC component", command=self.remove_dc_time_domain)
+        remove_dc_component_button.pack(pady=10)
+
+        self.remove_dc_component_plot_area = tk.Frame(right_frame, bg="#FFFFFF")
+        self.remove_dc_component_plot_area.pack(fill="both", expand=True)
 
         self.signals = []
 
@@ -64,19 +74,28 @@ class TaskPage6(tk.Frame):
             filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
         )
         if not file_paths:
-            return
+            return None
 
         self.signals = []
 
         try:
             for file_path in file_paths:
+                indices = []
+                samples = []
                 with open(file_path, 'r') as file:
                     lines = file.readlines()
-                    signal = [float(x) for line in lines for x in line.strip().split()]
-                    self.signals.append(np.array(signal))
+                    for line in lines:
+                        values = line.strip().split()
+                        if len(values) == 2:
+                            indices.append(int(values[0]))
+                            samples.append(float(values[1]))
+                self.signals.append({"indices": indices, "samples": samples})
+
             messagebox.showinfo("Success", f"{len(self.signals)} signals loaded successfully.")
+
         except Exception as e:
             messagebox.showerror("Error", f"Error loading files: {e}")
+            return None
 
     def clear_plot_area(self, plot_area):
         for widget in plot_area.winfo_children():
@@ -87,7 +106,21 @@ class TaskPage6(tk.Frame):
 
         figure = plt.Figure(figsize=(5, 3), dpi=100)
         ax = figure.add_subplot(111)
-        ax.plot(data, marker="o")
+        ax.plot(data, marker=" o")
+        ax.set_title(title)
+        ax.set_xlabel("Index")
+        ax.set_ylabel("Value")
+        ax.grid(True)
+
+        canvas = FigureCanvasTkAgg(figure, plot_area)
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+        canvas.draw()
+
+    def plot_signal(self, index, signal, title, plot_area):
+        self.clear_plot_area(plot_area)
+        figure = plt.Figure(figsize=(5, 3), dpi=100)
+        ax = figure.add_subplot(111)
+        ax.plot(index, signal)
         ax.set_title(title)
         ax.set_xlabel("Index")
         ax.set_ylabel("Value")
@@ -102,148 +135,194 @@ class TaskPage6(tk.Frame):
             messagebox.showerror("Error", "At least two signals are required for convolution.")
             return
 
-        try:
-            signal1, signal2 = self.signals[0], self.signals[1]
-            convolution_result = np.convolve(signal1, signal2, mode='full')
-            self.plot_result(convolution_result, "Convolution Result", self.convolution_plot_area)
+        signal1 = self.signals[0]
+        signal2 = self.signals[1]
+        indices1, samples1 = signal1["indices"], signal1["samples"]
+        indices2, samples2 = signal2["indices"], signal2["samples"]
+        min_index = indices1[0] + indices2[0]
+        max_index = indices1[-1] + indices2[-1]
+        output_indices = list(range(min_index, max_index + 1))
+        output_samples = []
 
-            # Print results to the console
-            print(f"Convolution Result:\n{convolution_result}")
+        for n in output_indices:
+            sum_value = 0
+            for k in range(len(samples1)):
+                x_index = indices1[k]
+                h_index = n - x_index
 
-            self.Compare_Signals("ConvolutionResult.txt", range(len(convolution_result)), convolution_result)
-            return convolution_result
-        except Exception as e:
-            messagebox.showerror("Error", f"Error computing convolution: {e}")
-    def compute_normalized_cross_correlation(self):
-        if len(self.signals) < 2:
-            messagebox.showerror("Error", "At least two signals are required for cross-correlation.")
-            return
+                if h_index in indices2:
+                    h_value = samples2[indices2.index(h_index)]
+                else:
+                    h_value = 0
 
-        try:
-            # Extract the first two signals
-            signal1, signal2 = self.signals[0], self.signals[1]
-            N = len(signal1)
+                sum_value += samples1[k] * h_value
+            output_samples.append(sum_value)
+        self.ConvTest(output_indices, output_samples)
+        self.plot_signal(output_indices, output_samples, "Convolution Signal", self.convolution_plot_area)
 
-            # Ensure signals are of the same length
-            if len(signal1) != len(signal2):
-                messagebox.showerror("Error", "Signals must have the same length.")
-                return
-
-            # Calculate mean and standard deviation of signals
-            mean1 = np.mean(signal1)
-            mean2 = np.mean(signal2)
-            stddev1 = np.std(signal1)
-            stddev2 = np.std(signal2)
-
-            # Calculate normalized cross-correlation
-            normalized_cross_corr = []
-            for lag in range(-N + 1, N):
-                value = 0
-                for n in range(N):
-                    # Wrap around using modulo for signal2
-                    index2 = (n + lag) % N
-                    value += (signal1[n] - mean1) * (signal2[index2] - mean2)
-                value /= (N * stddev1 * stddev2)  # Normalize
-                normalized_cross_corr.append(value)
-
-            # Adjust indices to get only the first 4 samples
-            indices = list(range(4))
-            values = [round(normalized_cross_corr[i + N - 1], 8) for i in indices]
-
-            # Print results to the console with 8 decimal places
-            print(f"Normalized Cross-Correlation Result:\n{values}")
-
-            # Find maximum correlation and calculate time delay
-            max_corr = max(values)
-            lag = indices[values.index(max_corr)]
-            sampling_time = 1  # Replace with the actual sampling time if available
-            time_delay = lag * sampling_time
-
-            # Update the signal data with the formatted cross-correlation results
-            self.correlation_results = [{"Index": i, "Value": v} for i, v in zip(indices, values)]
-
-            # Display results
-            self.plot_result(values, "Normalized Cross-Correlation Result", self.correlation_plot_area)
-
-            # Pass the indices and samples to the Compare_Signals method
-            self.Compare_Signals("CorrOutput.txt", indices, values)
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Error computing normalized cross-correlation: {e}")
-
-    def compute_moving_average(self):
+    def remove_dc_time_domain(self):
         if len(self.signals) < 1:
             messagebox.showerror("Error", "At least one signal is required for moving average.")
             return
 
+        signal1 = self.signals[0]
+        index = signal1["indices"]
+        signal = signal1["samples"]
+        dc_component = np.mean(signal)
+        signal_no_dc = signal - dc_component
+
+        signal_no_dc_rounded = [round(float(val), 3) for val in signal_no_dc]
+        self.Compare_Signals("DC_component_output.txt", index, signal_no_dc_rounded)
+        print(index)
+        print(signal_no_dc_rounded)
+        return signal_no_dc_rounded
+
+    def remove_dc_frequency_domain(self):
+        signal1 = self.signals[0]
+        index = signal1["indices"]
+        signal = signal1["samples"]
+        fft_signal = np.fft.fft(signal)
+        fft_signal[0] = 0
+        signal_no_dc = np.fft.ifft(fft_signal)
+        return np.real(signal_no_dc)
+
+    def compute_cross_correlation(self):
+       if not self.signals or len(self.signals) < 2:
+           messagebox.showerror("Error", "Please load at least two signals.")
+           return
+
+       try:
+           signal1 = np.array(self.signals[0]["samples"][:5])
+           signal2 = np.array(self.signals[1]["samples"][:5])
+
+           len_signal1 = len(signal1)
+           len_signal2 = len(signal2)
+
+           if len_signal1 != len_signal2:
+               messagebox.showerror("Error", "Signals must have the same length for correlation.")
+               return
+
+           print(f"Signal 1 Length: {len_signal1}")
+           print(f"Signal 2 Length: {len_signal2}")
+
+           X1_squared_sum = np.sum(signal1 ** 2)
+           X2_squared_sum = np.sum(signal2 ** 2)
+           normalization = np.sqrt(X1_squared_sum * X2_squared_sum)
+
+           r12 = []
+           for j in range(len_signal1):
+               numerator = sum(signal1[i] * signal2[(i + j) % len_signal1] for i in range(len_signal1))  # Periodic signals
+               r12.append(numerator / normalization)
+
+           lags = list(range(len_signal1))
+           self.plot_signal(lags, r12, "Cross-Correlation (Normalized)", self.correlation_plot_area)
+           self.Compare_Signals("CorrOutput.txt", lags, r12)
+           print("Computed Cross-Correlation Values (Normalized):", r12)
+
+       except ValueError as e:
+           messagebox.showerror("Error", f"Invalid input: {e}")
+       except Exception as e:
+           messagebox.showerror("Error", f"Error during cross-correlation: {e}")
+
+    def compute_moving_average(self):
+        if not self.signals:
+            messagebox.showerror("Error", "No signal file loaded.")
+            return
+
         try:
-            signal = self.signals[0]
             window_size = int(self.window_size_entry.get())
-
             if window_size <= 0:
-                messagebox.showerror("Error", "Window size must be greater than zero.")
+                raise ValueError("Window size must be greater than 0.")
+
+            signal = self.signals[0]["samples"]
+            indices = self.signals[0]["indices"]
+
+            if len(signal) < window_size:
+                messagebox.showerror("Error", "Window size cannot be larger than the signal length.")
                 return
 
-            if window_size > len(signal):
-                messagebox.showerror("Error", "Window size cannot be greater than the signal length.")
-                return
+            smoothed_signal = [
+                np.mean(signal[i:i + window_size])
+                for i in range(len(signal) - window_size + 1)
+            ]
+            smoothed_indices = indices[:len(smoothed_signal)]
 
-            moving_avg = []
-            indices = []
-            for i in range(len(signal) - window_size + 1):
-                window = signal[i:i + window_size]
-                avg = np.mean(window)
-                moving_avg.append(avg)
-                indices.append(i)
+            if window_size == 3:
+                SignalSamplesAreEqual("OutMovAvgTest1.txt", smoothed_indices, smoothed_signal)
+            elif window_size == 5:
+                SignalSamplesAreEqual("OutMovAvgTest2.txt", smoothed_indices, smoothed_signal)
 
-            self.plot_result(moving_avg, f"Moving Average (Window Size {window_size})", self.moving_avg_plot_area)
+            self.plot_signal(smoothed_indices, smoothed_signal, f"Moving Average (Window Size: {window_size})", self.moving_avg_plot_area)
 
-            # Print results to the console
-            print(f"Moving Average Result (Window Size {window_size}):\n{moving_avg}")
-
-            self.Compare_Signals("OutMovAvgTest1.txt", indices, moving_avg)
-            self.Compare_Signals("OutMovAvgTest2.txt", indices, moving_avg)
-
-        except ValueError:
-            messagebox.showerror("Error", "Please enter a valid number for the window size.")
+        except ValueError as e:
+            messagebox.showerror("Error", f"Invalid input: {e}")
         except Exception as e:
-            messagebox.showerror("Error", f"Error computing moving average: {e}")
+            messagebox.showerror("Error", f"An unexpected error occurred: {e}")
 
-    def Compare_Signals(self, file_name, indices, samples):
-        expected_indices = []
-        expected_samples = []
-
-        try:
-            with open(file_name, 'r') as f:
-                for _ in range(4):
-                    f.readline()
-                line = f.readline()
-                while line:
-                    line = line.strip()
-                    if len(line.split(' ')) == 2:
-                        index, value = line.split(' ')
-                        expected_indices.append(int(index))
-                        expected_samples.append(float(value))
+    def Compare_Signals(self,file_name,Your_indices,Your_samples):
+        expected_indices=[]
+        expected_samples=[]
+        with open(file_name, 'r') as f:
+            line = f.readline()
+            line = f.readline()
+            line = f.readline()
+            line = f.readline()
+            while line:
+                # process line
+                L=line.strip()
+                if len(L.split(' '))==2:
+                    L=line.split(' ')
+                    V1=int(L[0])
+                    V2=float(L[1])
+                    expected_indices.append(V1)
+                    expected_samples.append(V2)
                     line = f.readline()
-
-        except Exception as e:
-            print(f"Error reading file: {e}")
-            return
-
-        # Ensure the expected number of indices and samples match the computed results
-        if len(expected_samples) != len(samples):
-            print(f"Test case for {file_name} failed: Sample count mismatch.")
-            print(f"Expected samples count: {len(expected_samples)}, Computed samples count: {len(samples)}")
-            return
-
-        # Compare values
-        for i, (expected_index, expected_sample) in enumerate(zip(expected_indices, expected_samples)):
-            if i < len(indices):  # Compare only within bounds
-                computed_sample = samples[i]
-                if np.isclose(computed_sample, expected_sample):
-                    print(f"Test case for {file_name} passed at index {expected_index}.")
                 else:
-                    print(f"Test case for {file_name} failed at index {expected_index}. Expected: {expected_sample}, Got: {computed_sample}")
+                    break
+        print("Current Output Test file is: ")
+        print(file_name)
+        print("\n")
+        if (len(expected_samples)!=len(Your_samples)) and (len(expected_indices)!=len(Your_indices)):
+            messagebox.showerror("Failed","Test case failed, your signal have different length from the expected one")
+            return
+        for i in range(len(Your_indices)):
+            if(Your_indices[i]!=expected_indices[i]):
+                messagebox.showerror("Failed","Test case failed, your signal have different indicies from the expected one")
+                return
+        for i in range(len(expected_samples)):
+            if abs(Your_samples[i] - expected_samples[i]) < 0.01:
+                continue
             else:
-                print(f"Test case for {file_name} failed: Extra computed sample at index {indices[i]}.")
+                messagebox.showerror("Failed","Test case failed, your signal have different values from the expected one")
+                return
+        messagebox.showinfo("Sucess","Test case passed successfully")
+
+    def ConvTest(self,Your_indices,Your_samples):
+        """
+            Test inputs
+            InputIndicesSignal1 =[-2, -1, 0, 1]
+            InputSamplesSignal1 = [1, 2, 1, 1 ]
+
+            InputIndicesSignal2=[0, 1, 2, 3, 4, 5 ]
+            InputSamplesSignal2 = [ 1, -1, 0, 0, 1, 1 ]
+        """
+
+        expected_indices=[-2, -1, 0, 1, 2, 3, 4, 5, 6]
+        expected_samples = [1, 1, -1, 0, 0, 3, 3, 2, 1 ]
+
+
+        if (len(expected_samples)!=len(Your_samples)) and (len(expected_indices)!=len(Your_indices)):
+            messagebox.showerror("Failed","Conv Test case failed, your signal have different length from the expected one")
+            return
+        for i in range(len(Your_indices)):
+            if(Your_indices[i]!=expected_indices[i]):
+                messagebox.showerror("Failed","Conv Test case failed, your signal have different indicies from the expected one")
+                return
+        for i in range(len(expected_samples)):
+            if abs(Your_samples[i] - expected_samples[i]) < 0.01:
+                continue
+            else:
+                messagebox.showerror("Failed","Conv Test case failed, your signal have different values from the expected one")
+                return
+        messagebox.showinfo("Sucess","Conv Test case passed successfully")
 
