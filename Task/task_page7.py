@@ -63,18 +63,23 @@ class Task7(tk.Frame):
         self.result_text.grid(row=3, column=0, columnspan=2, padx=5, pady=5)
 
         self.resampling_frame = tk.Frame(self, bg="#FFFFFF", relief=tk.RIDGE, borderwidth=2)
-        self.resampling_frame.grid(row=4, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
+        self.resampling_frame.grid(row=1, column=10, columnspan=2, padx=10, pady=10, sticky="nsew")
 
         self.resample_label = tk.Label(self.resampling_frame, text="Resampling", bg="#FFFFFF")
         self.resample_label.grid(row=0, column=0, columnspan=2, pady=5)
 
-        self.resample_factor_label = tk.Label(self.resampling_frame, text="Resampling Factor", bg="#FFFFFF")
-        self.resample_factor_label.grid(row=1, column=0, padx=5, pady=5)
+        self.resample_l_factor_label = tk.Label(self.resampling_frame, text="Resampling Factor L", bg="#FFFFFF")
+        self.resample_l_factor_label.grid(row=1, column=0, padx=5, pady=5)
+        self.resample_l_factor_entry = tk.Entry(self.resampling_frame)
+        self.resample_l_factor_entry.grid(row=1, column=1, padx=5, pady=5)
+
+        self.resample_factor_label = tk.Label(self.resampling_frame, text="Resampling Factor M", bg="#FFFFFF")
+        self.resample_factor_label.grid(row=2, column=0, padx=5, pady=5)
         self.resample_factor_entry = tk.Entry(self.resampling_frame)
-        self.resample_factor_entry.grid(row=1, column=1, padx=5, pady=5)
+        self.resample_factor_entry.grid(row=2, column=1, padx=5, pady=5)
 
         self.resample_button = tk.Button(self.resampling_frame, text="Resample Signal", command=self.resample_signal)
-        self.resample_button.grid(row=2, column=0, columnspan=2, padx=5, pady=10)
+        self.resample_button.grid(row=3, column=0, columnspan=2, padx=5, pady=10)
 
     def load_files(self):
         file_paths = filedialog.askopenfilenames(
@@ -282,9 +287,13 @@ class Task7(tk.Frame):
 
         return indices, h
 
+
+
     def resample_signal(self):
         try:
-            resample_factor = float(self.resample_factor_entry.get())
+            L = int(self.resample_l_factor_entry.get())  
+            M = int(self.resample_factor_entry.get())  
+           
 
             if not hasattr(self, 'signals') or not self.signals:
                 messagebox.showerror("Error", "No signals loaded.")
@@ -294,16 +303,97 @@ class Task7(tk.Frame):
             input_indices = input_signal['indices']
             input_samples = input_signal['samples']
 
-            # Resample the signal
-            new_indices = [int(idx * resample_factor) for idx in input_indices]
-            new_samples = np.interp(new_indices, input_indices, input_samples)
+            if M == 0 and L == 0:
+                messagebox.showerror("Error", "Both M and L cannot be zero.")
+                return
+            #upsamplind
+            if M == 0 and L != 0:
+                upsampled_indices,upsampled_samples = self.upsample(input_indices,input_samples, L)
 
-            # Display the resampled signal in the result text box
-            self.result_text.delete("1.0", tk.END)
-            self.result_text.insert(tk.END, "Resampled Signal:\n")
-            for idx, sample in zip(new_indices, new_samples):
-                self.result_text.insert(tk.END, f"Index: {idx}, Sample: {sample:.6f}\n")
+                indices ,coefficients =self.design_fir_filter('Low pass',8000,50,1500,500)
+                self.indices_array = np.array(indices)
+                self.samples_array = np.array(coefficients)
+
+                self.filtered_signal = {'indices': self.indices_array, 'samples': self.samples_array}
+                if len(self.signals) > 0:
+                   self.signals[0] = {"indices": upsampled_indices, "samples": upsampled_samples}
+                else:
+                  # If signals is empty, add a new signal
+                   self.signals.append({"indices": upsampled_indices, "samples": upsampled_samples})
+                filtered_signal =self.convolution()
+                self.display_signal({'indices': filtered_signal['indices'], 'samples': filtered_signal['samples']}, "Upsampled Signal ")
+                Compare_Signals("FIR Test cases/Sampling_Up.txt",filtered_signal['indices'],filtered_signal['samples'])
+
+
+            #downsamplind
+            elif M != 0 and L == 0:
+                indices ,coefficients =self.design_fir_filter('Low pass',8000,50,1500,500)
+                self.indices_array = np.array(indices)
+                self.samples_array = np.array(coefficients)
+
+                self.filtered_signal = {'indices': self.indices_array, 'samples': self.samples_array}
+
+                filtered_signal =self.convolution()
+               
+                downsampled_indices ,downsampled_samples= self.downsample(filtered_signal['indices'],filtered_signal['samples'], M)
+                self.display_signal({'indices': downsampled_indices, 'samples': downsampled_samples}, "Downsampled Signal ")
+                Compare_Signals("FIR Test cases/Sampling_Down.txt", downsampled_indices, downsampled_samples)
+
+
+            elif M != 0 and L != 0:
+                upsampled_indices,upsampled_samples = self.upsample(input_indices, input_samples,L)
+                # filter
+                indices ,coefficients =self.design_fir_filter('Low pass',8000,50,1500,500)
+                self.indices_array = np.array(indices)
+                self.samples_array = np.array(coefficients)
+
+                self.filtered_signal = {'indices': self.indices_array, 'samples': self.samples_array}
+                if len(self.signals) > 0:
+                   self.signals[0] = {"indices": upsampled_indices, "samples": upsampled_samples}
+                else:
+                  # If signals is empty, add a new signal
+                   self.signals.append({"indices": upsampled_indices, "samples": upsampled_samples})
+                filtered_signal =self.convolution()
+               
+                # Downsampling
+                downsampled_indices ,downsampled_samples= self.downsample(filtered_signal['indices'],filtered_signal['samples'], M)
+                self.display_signal({'indices': downsampled_indices, 'samples': downsampled_samples}, "Sampling_Up_Down Signal ")
+                Compare_Signals("FIR Test cases/Sampling_Up_Down.txt", downsampled_indices, downsampled_samples)
 
         except ValueError as e:
             messagebox.showerror("Error", f"Error during resampling: {e}")
+
+    def upsample(self, indices,samples, L):
+
+        start = indices[0]
+        end = indices[0] + (len(indices) - 1) * L
+        new_indices = list(range(start, end + 1))
+        upsampled_signal = []
+    
+        for i in range(len(samples)):
+        # Append the current signal value
+          upsampled_signal.append(samples[i])
+        
+           # Insert L zeros after each signal value (except the last one)
+          if i < len(samples) - 1:
+            upsampled_signal.extend([0] * (L-1))
+         
+    
+        return new_indices, upsampled_signal
+
+
+
+    def downsample(self,indices, samples, M):
+       
+       downsampled_samples = samples[::M]  
+       return indices[:len(downsampled_samples)], downsampled_samples
+
+    def display_signal(self, signal, description):
+        """
+        Displays the signal in the result box.
+        """
+        self.result_text.delete("1.0", tk.END)
+        self.result_text.insert(tk.END, f"{description}:\n")
+        for idx, sample in zip(signal['indices'], signal['samples']):
+            self.result_text.insert(tk.END, f"Index: {idx}, Sample: {sample:.6f}\n")
 
