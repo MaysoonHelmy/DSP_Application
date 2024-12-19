@@ -6,6 +6,7 @@ from task_page3 import TaskPage3
 from task4 import TaskPage4
 from task_page6 import TaskPage6
 from task_page7 import Task7
+from Project import EOGTaskPage
 
 class DSPTasksPage(tk.Frame):
     def __init__(self, parent, task_name):
@@ -23,7 +24,7 @@ class TaskApp(tk.Tk):
 
         # Create a main frame
         main_frame = tk.Frame(self, bg="#F8F9FA")
-        main_frame.pack(fill ="both", expand=True)
+        main_frame.pack(fill="both", expand=True)
 
         # Create a frame for the task list (left side)
         self.task_list_frame = tk.Frame(main_frame, bg="#D9E3E0", width=450)
@@ -37,7 +38,7 @@ class TaskApp(tk.Tk):
         self.frames = {}
 
         # List of tasks
-        tasks = ["DSP_TASKS", "Load & Generate Signal", "Arithmetic Operations", "Quantization", "Frequency Domain", "Convolution & Correlation", "FIR Filter and Resampling"]
+        tasks = [ "DSP_TASKS", "Load & Generate Signal","Arithmetic Operations","Quantization", "Frequency Domain", "Convolution & Correlation", "FIR Filter and Resampling","EOG Right and Left"]
 
         # Create task list on the left side
         self.create_task_list(tasks)
@@ -57,7 +58,10 @@ class TaskApp(tk.Tk):
             elif task == "Convolution & Correlation":
                 page = TaskPage6(self.task_detail_frame, task)
             elif task == "FIR Filter and Resampling":
-                page = Task7(self.task_detail_frame)  # Add Task7 here
+                page = Task7(self.task_detail_frame)
+            elif task == "EOG Right and Left":
+                page = EOGTaskPage(self.task_detail_frame, task)  # Create EOG task page
+
             self.frames[task] = page
 
         # Show the DSP Tasks page initially

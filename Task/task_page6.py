@@ -5,10 +5,6 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from task_page2 import SignalSamplesAreEqual
 
-
-
-
-
 class TaskPage6(tk.Frame):
     def __init__(self, parent, task_name):
         super().__init__(parent, bg="#FFFFFF")
@@ -163,23 +159,23 @@ class TaskPage6(tk.Frame):
         self.ConvTest(output_indices, output_samples)
         self.plot_signal(output_indices, output_samples, "Convolution Signal", self.convolution_plot_area)
 
-    def remove_dc_time_domain(self):
-        if len(self.signals) < 1:
-            messagebox.showerror("Error", "At least one signal is required for moving average.")
+    def remove_dc_time_domain(self, signal_data):
+        # Check if signal_data is empty
+        if len(signal_data) < 1:
+            messagebox.showerror("Error", "At least one signal is required for DC removal.")
             return
 
-        signal1 = self.signals[0]
-        index = signal1["indices"]
-        signal = signal1["samples"]
-        dc_component = np.mean(signal)
-        signal_no_dc = signal - dc_component
+        # Assuming signal_data is a numpy array, compute the DC component
+        dc_component = np.mean(signal_data)
+        signal_no_dc = signal_data - dc_component
 
+        # Round the signal values
         signal_no_dc_rounded = [round(float(val), 3) for val in signal_no_dc]
-        self.Compare_Signals("DC_component_output.txt", index, signal_no_dc_rounded)
-        print(index)
+
+        # Print or save the result if needed
         print(signal_no_dc_rounded)
         return signal_no_dc_rounded
-    
+
     def dft(self, signal):
         N = len(signal)
         dft_result = []
