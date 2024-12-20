@@ -2,13 +2,14 @@ import tkinter as tk
 from tkinter import ttk
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, confusion_matrix
 from scipy.signal import butter, filtfilt
 from pywt import wavedec
 import matplotlib.pyplot as plt
+import seaborn as sns
 from task_page6 import TaskPage6
 from task_page7 import Task7
-from task_page2 import TaskPage2
+from sklearn.model_selection import GridSearchCV
 
 class EOGTaskPage(tk.Frame):
     def __init__(self, parent, task_name):
@@ -19,162 +20,238 @@ class EOGTaskPage(tk.Frame):
         self.indices_array = None
         self.samples_array = None
         self.filtered_signal = None
+        self.b = None
+        self.a = None
 
         label = tk.Label(self, text=task_name, font=("Helvetica", 30, "bold"), bg="#FFFFFF")
         label.pack(pady=20)
 
-        # Remove the load button as no files will be loaded
         model_button = ttk.Button(self, text="Train & Test KNN Model", command=self.knn_model)
         model_button.pack(pady=10)
 
         self.data = {}
 
-        # Add a result label to display the accuracy
         self.result_label = tk.Label(self, text="Accuracy: ", font=("Helvetica", 14), bg="#FFFFFF")
         self.result_label.pack(pady=20)
 
-    def load_data_from_file(self):
-        # Specify the file paths for the training and testing data
-        train_left_file = "right&left/train_left.txt"
-        test_left_file = "right&left/test_left.txt"
-        train_right_file = "right&left/train_right.txt"
-        test_right_file = "right&left/test_right.txt"
+    def normalize_signal(self, signal, method="0 to 1"):
+        signal = signal.flatten()
+        if method == "0 to 1":
+            min_val = np.min(signal)
+            max_val = np.max(signal)
+            if max_val == min_val:
+                return np.zeros_like(signal)
+            normalized = (signal - min_val) / (max_val - min_val)
+        else:  # -1 to 1
+            min_val = np.min(signal)
+            max_val = np.max(signal)
+            if max_val == min_val:
+                return np.zeros_like(signal)
+            normalized = 2 * ((signal - min_val) / (max_val - min_val)) - 1
 
-        # Read the files for left and right signals using the paths passed manually
-        self.data['train_left'] = self.read_signal_from_file(train_left_file)
-        self.data['test_left'] = self.read_signal_from_file(test_left_file)
-        self.data['train_right'] = self.read_signal_from_file(train_right_file)
-        self.data['test_right'] = self.read_signal_from_file(test_right_file)
+        return normalized
 
-        # Manually defining labels (as an example, adjust according to your dataset)
-        # These should be loaded from a file or defined properly for classification
-        self.data['train_labels'] = np.zeros(len(self.data['train_left']))  # Dummy labels for left data
-        self.data['test_labels'] = np.zeros(len(self.data['test_left']))  # Dummy labels for test data
-        # You can add right labels similarly or define how they are calculated
+    def create_windows(self, signal, window_size=200, stride=100):
+        windows = []
+        for i in range(0, len(signal) - window_size + 1, stride):
+            window = signal[i:i + window_size]
+            windows.append(window)
+        return np.array(windows)
+
+    def downsample_signal(self, indices, samples, factor):
+        try:
+            downsampled = Task7.downsample(self, indices, samples, factor)
+            return np.array(downsampled)
+        except Exception as e:
+            print(f"Error in downsample_signal: {e}")
+            return np.array([])
 
     def read_signal_from_file(self, file_path):
-        # Read the signal data from a text file
-        signal = []
-        with open(file_path, 'r') as file:
-            for line in file:
-                # Split values by space or comma and convert to float
-                values = line.split()
-                signal.extend([float(value) for value in values])
-        return np.array(signal)
+        try:
+            signal = []
+            with open(file_path, 'r') as file:
+                for line in file:
+                    values = [float(val) for val in line.strip().split()]
+                    if values:
+                        signal.extend(values)
+            signal = np.array(signal)
+            if signal.size == 0:
+                return np.array([[]])
+            return signal.reshape(-1, 1)
+        except Exception as e:
+            print(f"Error reading file {file_path}: {e}")
+            return np.array([[]])
+
+    def load_data_from_file(self):
+        try:
+            train_left_file = "right&left/train_left.txt"
+            test_left_file = "right&left/test_left.txt"
+            train_right_file = "right&left/train_right.txt"
+            test_right_file = "right&left/test_right.txt"
+
+            self.data['train_left'] = self.read_signal_from_file(train_left_file)
+            self.data['test_left'] = self.read_signal_from_file(test_left_file)
+            self.data['train_right'] = self.read_signal_from_file(train_right_file)
+            self.data['test_right'] = self.read_signal_from_file(test_right_file)
+
+        except Exception as e:
+            print(f"Error in load_data_from_file: {e}")
+            raise
 
     def butter_bandpass(self, lowcut, highcut, fs, order=4):
-        nyquist = 0.5 * fs  # Nyquist frequency
+        nyquist = 0.5 * fs
         low = lowcut / nyquist
         high = highcut / nyquist
-        b, a = butter(order, [low, high], btype='band')
-        return b, a
+        return butter(order, [low, high], btype='band')
 
-    def apply_bandpass_filter(self, signal, lowcut=0.5, highcut=20, fs=176, order=4):
-        b, a = self.butter_bandpass(lowcut, highcut, fs, order)
-        # Ensure signal is 1D before applying the filter
-        if signal.ndim > 1:
-            signal = signal.flatten()  # Flatten to 1D if necessary
-        filtered_signal = filtfilt(b, a, signal)
-        return filtered_signal
+    def apply_bandpass_filter(self, signal):
+        if signal.size == 0:
+            return np.array([])
 
+        signal = signal.flatten()
+
+        try:
+            filtered_signal = filtfilt(self.b, self.a, signal)
+            return filtered_signal
+        except Exception as e:
+            print(f"Error in filtering: {e}")
+            return signal
 
     def preprocess_data(self):
-        # Remove DC component before Bandpass Filtering for left and right signals
-        self.data['train_left'] = TaskPage6.remove_dc_time_domain(self, self.data['train_left'])
-        self.data['test_left'] = TaskPage6.remove_dc_time_domain(self, self.data['test_left'])
-        self.data['train_right'] = TaskPage6.remove_dc_time_domain(self, self.data['train_right'])
-        self.data['test_right'] = TaskPage6.remove_dc_time_domain(self, self.data['test_right'])
+        try:
+            lowcut = 0.5
+            highcut = 50.0
+            fs = 1000
 
-        # Apply Bandpass Filter after DC removal for left and right signals
-        self.data['train_left'] = np.array([self.apply_bandpass_filter(signal) for signal in self.data['train_left']])
-        self.data['test_left'] = np.array([self.apply_bandpass_filter(signal) for signal in self.data['test_left']])
-        self.data['train_right'] = np.array([self.apply_bandpass_filter(signal) for signal in self.data['train_right']])
-        self.data['test_right'] = np.array([self.apply_bandpass_filter(signal) for signal in self.data['test_right']])
+            self.b, self.a = self.butter_bandpass(lowcut, highcut, fs)
+            target_length = 1000  # Fixed length for all signals
 
-        # Normalize the data for left and right signals
-        self.data['train_left'] = TaskPage2.normalize_signal(self.data['train_left'], "0 to 1")
-        self.data['test_left'] = TaskPage2.normalize_signal(self.data['test_left'], "0 to 1")
-        self.data['train_right'] = TaskPage2.normalize_signal(self.data['train_right'], "0 to 1")
-        self.data['test_right'] = TaskPage2.normalize_signal(self.data['test_right'], "0 to 1")
+            for signal_type in ['train_left', 'train_right', 'test_left', 'test_right']:
+                if signal_type in self.data and self.data[signal_type].size > 0:
+                    signal = np.array(self.data[signal_type])
 
-        # Get the indices and samples before downsampling
-        self.indices_array = np.arange(len(self.data['train_left']))
-        self.samples_array = self.data['train_left']
+                    # Apply bandpass filter
+                    filtered_signal = self.apply_bandpass_filter(signal)
 
-        self.indices_array1 = np.arange(len(self.data['test_left']))
-        self.samples_array1 = self.data['test_left']
+                    # Normalize
+                    normalized_signal = self.normalize_signal(filtered_signal, "0 to 1")
 
-        # Downsample the data for left and right signals
-        self.data['train_left'] = Task7.downsample(self, self.indices_array, self.samples_array, 88)
-        self.data['test_left'] = Task7.downsample(self, self.indices_array1, self.samples_array1, 88)
+                    # Remove DC component
+                    dc_removed = np.array(TaskPage6.remove_dc_time_domain(self, normalized_signal))
 
-        self.indices_array2 = np.arange(len(self.data['train_right']))
-        self.samples_array2 = self.data['train_right']
+                    # Downsample
+                    downsampled = self.downsample_signal(
+                        np.arange(len(dc_removed)),
+                        dc_removed,
+                        88
+                    )
 
-        self.indices_array3 = np.arange(len(self.data['test_right']))
-        self.samples_array3 = self.data['test_right']
+                    # Ensure consistent length
+                    if len(downsampled) < target_length:
+                        self.data[signal_type] = np.pad(
+                            downsampled,
+                            (0, target_length - len(downsampled))
+                        )
+                    else:
+                        self.data[signal_type] = downsampled[:target_length]
 
-        # Downsample the data for right signals
-        self.data['train_right'] = Task7.downsample(self, self.indices_array2, self.samples_array2, 88)
-        self.data['test_right'] = Task7.downsample(self, self.indices_array3, self.samples_array3, 88)
 
-    def feature_engineering(self, signal_data):
-        # Apply wavelet transform
-        coeffs = wavedec(signal_data, 'db4', level=4)
+        except Exception as e:
+            print(f"Error in preprocess_data: {e}")
+            raise
 
-        # Flatten the coefficients to use them as features for machine learning
-        features = np.hstack([coeff.flatten() for coeff in coeffs])
+    def wavelet_feature_engineering(self, signal_data):
+        if not isinstance(signal_data, np.ndarray):
+            signal_data = np.array(signal_data)
 
-        return features
+        if signal_data.size == 0:
+            return np.array([])
+
+        signal_data = signal_data.flatten()
+
+        try:
+            # Perform Discrete Wavelet Transform (DWT)
+            coeffs = wavedec(signal_data, 'db4', level=5)
+            features = []
+            for coeff in coeffs:
+                features.extend([np.mean(coeff), np.std(coeff), np.max(coeff), np.min(coeff)])
+            return np.array(features)
+        except Exception as e:
+            print(f"Error in wavelet_feature_engineering: {e}")
+            return np.array([])
+
+    def extract_features_from_windows(self, signal, window_size=200, stride=100):
+        windows = self.create_windows(signal, window_size, stride)
+        features = []
+        for window in windows:
+            window_features = self.wavelet_feature_engineering(window)
+            features.append(window_features)
+        return np.array(features)
 
     def knn_model(self):
-        # Load data directly
-        self.load_data_from_file()
+        try:
+            self.load_data_from_file()
+            self.preprocess_data()
 
-        # Apply Preprocessing
-        self.preprocess_data()
+            # Extract features using sliding windows for preprocessed training data
+            window_size = 200
+            stride = 100
 
-        # Apply Feature engineering for left and right signals
-        X_train_left = np.array([self.feature_engineering(signal) for signal in self.data['train_left']])
-        X_test_left = np.array([self.feature_engineering(signal) for signal in self.data['test_left']])
+            # Process training data after preprocessing
+            X_train_left = self.extract_features_from_windows(self.data['train_left'], window_size, stride)
+            X_train_right = self.extract_features_from_windows(self.data['train_right'], window_size, stride)
 
-        X_train_right = np.array([self.feature_engineering(signal) for signal in self.data['train_right']])
-        X_test_right = np.array([self.feature_engineering(signal) for signal in self.data['test_right']])
+            # Process test data
+            X_test_left = self.extract_features_from_windows(self.data['test_left'], window_size, stride)
+            X_test_right = self.extract_features_from_windows(self.data['test_right'], window_size, stride)
 
-        # Concatenate left and right signals' features for training
-        X_train = np.vstack((X_train_left, X_train_right))
-        X_test = np.vstack((X_test_left, X_test_right))
+            # Combine features
+            X_train = np.vstack((X_train_left, X_train_right))
+            X_test = np.vstack((X_test_left, X_test_right))
 
-        # Concatenate left and right labels for training
-        y_train = np.hstack((self.data['train_labels'], self.data['train_labels']))
-        y_test = np.hstack((self.data['test_labels'], self.data['test_labels']))
+            # Create labels
+            y_train = np.array([0] * len(X_train_left) + [1] * len(X_train_right), dtype=int)
+            y_test = np.array([0] * len(X_test_left) + [1] * len(X_test_right), dtype=int)
 
-        # Train the KNN model
-        model = KNeighborsClassifier(n_neighbors=5)
-        model.fit(X_train, y_train)
+            # Grid search for hyperparameter tuning
+            param_grid = {'n_neighbors': range(1, 11), 'weights': ['uniform', 'distance']}
+            grid_search = GridSearchCV(KNeighborsClassifier(), param_grid, cv=5)
+            grid_search.fit(X_train, y_train)
 
-        # Predict the test labels
-        predictions = model.predict(X_test)
+            best_model = grid_search.best_estimator_
+            predictions = best_model.predict(X_test)
+            accuracy = accuracy_score(y_test, predictions)
 
-        # Calculate accuracy
-        accuracy = accuracy_score(y_test, predictions)
+            self.result_label.config(text=f"Accuracy: {accuracy * 100:.2f}%")
+            self.plot_model_function(grid_search.best_params_, accuracy)
+            self.plot_confusion_matrix(y_test, predictions)
 
-        # Update the result_label to show the accuracy in the GUI
-        self.result_label.config(text=f"Accuracy: {accuracy * 100:.2f}%")
+        except Exception as e:
+            print(f"Error in KNN model: {e}")
+            self.result_label.config(text="Error in processing. Check console for details.")
 
-        # Show the plot for model performance (Confusion Matrix or other)
-        self.plot_model_performance(y_test, predictions)
+    def plot_model_function(self, best_params, accuracy):
+        try:
+            fig, ax = plt.subplots(1, 1, figsize=(8, 6))
 
-    def plot_model_performance(self, y_true, y_pred):
-        # Confusion Matrix Plot
-        from sklearn.metrics import confusion_matrix
-        import seaborn as sns
+            ax.plot(best_params['n_neighbors'], accuracy, 'ro')
 
-        cm = confusion_matrix(y_true, y_pred)
+            ax.set_xlabel('Number of Neighbors')
+            ax.set_ylabel('Accuracy')
+            ax.set_title('KNN Hyperparameter Tuning')
 
-        plt.figure(figsize=(6, 6))
-        sns.heatmap(cm, annot=True, fmt='d', cmap="Blues", xticklabels=["Class 0", "Class 1"], yticklabels=["Class 0", "Class 1"])
-        plt.xlabel('Predicted')
-        plt.ylabel('True')
-        plt.title('Confusion Matrix')
+            plt.tight_layout()
+            plt.show()
+
+        except Exception as e:
+            print(f"Error in plot_model_function: {e}")
+
+    def plot_confusion_matrix(self, y_test, predictions):
+        cm = confusion_matrix(y_test, predictions)
+        fig, ax = plt.subplots(figsize=(6, 5))
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=["Left", "Right"], yticklabels=["Left", "Right"])
+        ax.set_xlabel('Predicted')
+        ax.set_ylabel('True')
+        ax.set_title('Confusion Matrix')
+        plt.tight_layout()
         plt.show()
