@@ -1,32 +1,23 @@
 import tkinter as tk
 from tkinter import ttk
 import numpy as np
+import pywt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
-from sklearn.model_selection import cross_val_score, GridSearchCV
+from sklearn.model_selection import cross_val_score, GridSearchCV, LeaveOneOut
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score, classification_report
 from scipy.signal import butter, filtfilt
-from pywt import wavedec
-from sklearn.svm import SVC
-from sklearn.tree import DecisionTreeClassifier
 from sklearn.preprocessing import StandardScaler
-
-from task_page6 import TaskPage6
-from task_page7 import Task7
 
 class EOGTaskPage(tk.Frame):
     def __init__(self, parent, task_name):
         super().__init__(parent, bg="#FFFFFF")
 
         # Initialize signal variables
-        self.indices_array1 = None
-        self.samples_array1 = None
-        self.indices_array = None
-        self.samples_array = None
-        self.filtered_signal = None
-        self.b = None
-        self.a = None
+        self.data = {}
+        self.raw_data = {}
+        self.scaler = StandardScaler()
 
         # Create main container
         main_container = tk.Frame(self, bg="#FFFFFF")
@@ -44,18 +35,12 @@ class EOGTaskPage(tk.Frame):
         label = tk.Label(top_frame, text=task_name, font=("Helvetica", 30, "bold"), bg="#FFFFFF")
         label.pack(pady=20)
 
-        # Button frame for model buttons
+        # Button frame for KNN button
         button_frame = tk.Frame(top_frame, bg="#FFFFFF")
         button_frame.pack(pady=10)
 
         knn_button = ttk.Button(button_frame, text="Train & Test KNN Model", command=self.knn_model)
         knn_button.grid(row=0, column=0, padx=5, pady=5)
-
-        svm_button = ttk.Button(button_frame, text="Train & Test SVM Model", command=self.svm_model)
-        svm_button.grid(row=0, column=1, padx=5, pady=5)
-
-        tree_button = ttk.Button(button_frame, text="Train & Test Decision Tree", command=self.tree_model)
-        tree_button.grid(row=0, column=2, padx=5, pady=5)
 
         # Result text box
         self.result_text = tk.Text(top_frame, height=8, width=80, wrap=tk.WORD, font=("Helvetica", 12))
@@ -69,66 +54,6 @@ class EOGTaskPage(tk.Frame):
         self.canvas_widget = self.canvas.get_tk_widget()
         self.canvas_widget.pack(fill=tk.BOTH, expand=True)
 
-        self.data = {}
-        self.scaler = StandardScaler()
-
-    def plot_comparison(self, raw_signal_left, processed_signal_left, raw_signal_right, processed_signal_right):
-        """Plot both left and right signals side by side"""
-
-        # Left plot
-        self.plot_left.clear()
-        self.plot_left.plot(raw_signal_left, 'r-', alpha=0.6)
-        self.plot_left.plot(processed_signal_left, 'b-', alpha=0.6)
-        self.plot_left.set_title("Left Signal")
-        self.plot_left.set_xlabel("Samples")
-        self.plot_left.get_yaxis().set_visible(False)  # Remove Y-axis labels
-        self.plot_left.legend(loc="upper right")
-        self.plot_left.grid(True)
-
-        # Right plot
-        self.plot_right.clear()
-        self.plot_right.plot(raw_signal_right, 'r-', alpha=0.6)
-        self.plot_right.plot(processed_signal_right, 'b-', alpha=0.6)
-        self.plot_right.set_title("Right Signal")
-        self.plot_right.set_xlabel("Samples")
-        self.plot_right.get_yaxis().set_visible(False)  # Remove Y-axis labels
-        self.plot_right.legend(loc="upper right")
-        self.plot_right.grid(True)
-
-        self.canvas.draw()
-
-    def normalize_signal(self, signal, method="0 to 1"):
-        """Normalize signal to either [0, 1] or [-1, 1] range"""
-        signal = signal.flatten()
-        if method == "0 to 1":
-            min_val = np.min(signal)
-            max_val = np.max(signal)
-            if max_val == min_val:
-                return np.zeros_like(signal)
-            return (signal - min_val) / (max_val - min_val)
-        else:  # Normalize to [-1, 1]
-            min_val = np.min(signal)
-            max_val = np.max(signal)
-            if max_val == min_val:
-                return np.zeros_like(signal)
-            return 2 * ((signal - min_val) / (max_val - min_val)) - 1
-
-    def create_windows(self, signal, window_size=200, stride=100):
-        """Create sliding windows from the signal"""
-        windows = []
-        for i in range(0, len(signal) - window_size + 1, stride):
-            window = signal[i:i + window_size]
-            windows.append(window)
-        return np.array(windows)
-
-    def downsample_signal(self, indices, samples, factor):
-        """Downsample the signal by a given factor"""
-        try:
-            downsampled = Task7.downsample(self, indices, samples, factor)
-            return np.array(downsampled)
-        except Exception:
-            return np.array([])
-
     def read_signal_from_file(self, file_path):
         """Read signal data from a file"""
         try:
@@ -139,22 +64,20 @@ class EOGTaskPage(tk.Frame):
                     if values:
                         signal.extend(values)
             signal = np.array(signal)
-            return signal.reshape(-1, 1) if signal.size else np.array([[]])
+            return signal if signal.size else np.array([])  # Ensure non-empty array
         except Exception:
-            return np.array([[]])
+            return np.array([])
 
     def load_data_from_file(self):
         """Load training and testing data from files"""
         try:
-            train_left_file = "right&left/train_left.txt"
-            test_left_file = "right&left/test_left.txt"
-            train_right_file = "right&left/train_right.txt"
-            test_right_file = "right&left/test_right.txt"
+            self.raw_data['train_left'] = self.read_signal_from_file("right&left/train_left.txt")
+            self.raw_data['test_left'] = self.read_signal_from_file("right&left/test_left.txt")
+            self.raw_data['train_right'] = self.read_signal_from_file("right&left/train_right.txt")
+            self.raw_data['test_right'] = self.read_signal_from_file("right&left/test_right.txt")
 
-            self.data['train_left'] = self.read_signal_from_file(train_left_file)
-            self.data['test_left'] = self.read_signal_from_file(test_left_file)
-            self.data['train_right'] = self.read_signal_from_file(train_right_file)
-            self.data['test_right'] = self.read_signal_from_file(test_right_file)
+            # Also assign raw data to the data dictionary
+            self.data = self.raw_data.copy()
 
         except Exception:
             raise
@@ -166,95 +89,73 @@ class EOGTaskPage(tk.Frame):
         high = highcut / nyquist
         return butter(order, [low, high], btype='band')
 
-    def apply_bandpass_filter(self, signal):
+    def apply_bandpass_filter(self, signal, b, a):
         """Apply bandpass filter to the signal"""
         if signal.size == 0:
             return np.array([])
 
-        signal = signal.flatten()
         try:
-            filtered_signal = filtfilt(self.b, self.a, signal)
-            return filtered_signal
+            return filtfilt(b, a, signal.flatten())
         except Exception:
             return signal
 
+    def normalize_signal(self, signal):
+        """Normalize signal to [0, 1] range"""
+        min_val = np.min(signal)
+        max_val = np.max(signal)
+        if max_val == min_val:
+            return np.zeros_like(signal)
+        return (signal - min_val) / (max_val - min_val)
+
     def preprocess_data(self):
-        """Preprocess data: bandpass filter, normalize, downsample"""
+        """Preprocess data: bandpass filter and normalize"""
         try:
             lowcut = 0.5
             highcut = 50.0
             fs = 1000
-            self.b, self.a = self.butter_bandpass(lowcut, highcut, fs)
+            b, a = self.butter_bandpass(lowcut, highcut, fs)
 
-            target_length = 1000
+            for key in self.data:
+                signal = self.data[key]
+                if signal.size > 0:
+                    filtered_signal = self.apply_bandpass_filter(signal, b, a)
+                    self.data[key] = self.normalize_signal(filtered_signal)
+        except Exception as e:
+            print(f"Error during preprocessing: {e}")
 
-            left_signal_raw = None
-            right_signal_raw = None
-            processed_left_signal = None
-            processed_right_signal = None
-
-            for signal_type in ['train_left', 'train_right']:
-                if signal_type in self.data and self.data[signal_type].size > 0:
-                    signal = np.array(self.data[signal_type])
-
-                    # Store raw signal for plotting
-                    raw_signal = signal.flatten()
-
-                    # Apply preprocessing
-                    filtered_signal = self.apply_bandpass_filter(signal)
-                    normalized_signal = self.normalize_signal(filtered_signal, "0 to 1")
-                    dc_removed = np.array(TaskPage6.remove_dc_time_domain(self, normalized_signal))
-                    downsampled = self.downsample_signal(np.arange(len(dc_removed)), dc_removed, 88)
-
-                    # Ensure consistent signal length
-                    if len(downsampled) < target_length:
-                        processed_signal = np.pad(downsampled, (0, target_length - len(downsampled)))
-                    else:
-                        processed_signal = downsampled[:target_length]
-
-                    self.data[signal_type] = processed_signal
-
-                    # Collect raw and processed signals for plotting
-                    if signal_type == 'train_left':
-                        left_signal_raw = raw_signal
-                        processed_left_signal = processed_signal
-                    elif signal_type == 'train_right':
-                        right_signal_raw = raw_signal
-                        processed_right_signal = processed_signal
-
-            # Now plot both left and right signals side by side
-            if left_signal_raw is not None and processed_left_signal is not None and right_signal_raw is not None and processed_right_signal is not None:
-                self.plot_comparison(left_signal_raw, processed_left_signal, right_signal_raw, processed_right_signal)
-
-        except Exception:
-            raise
-
-    def wavelet_feature_engineering(self, signal_data):
-        """Perform wavelet feature extraction"""
-        if not isinstance(signal_data, np.ndarray):
-            signal_data = np.array(signal_data)
-
-        if signal_data.size == 0:
-            return np.zeros(20)  # Return 20 zeros (5 stats × 4 levels)
-
-        signal_data = signal_data.flatten()
+    def wavelet_feature_engineering(self, signal, wavelet='db4', level=2):
+        """Perform wavelet feature extraction using mean, std, var, and energy"""
+        if signal.size == 0:
+            return np.zeros(4 * (level + 1))
 
         try:
-            coeffs = wavedec(signal_data, 'db4', level=4)
+            coeffs = pywt.wavedec(signal, wavelet, level=level)
             features = []
             for coeff in coeffs:
-                features.extend([np.mean(coeff), np.std(coeff), np.max(coeff), np.min(coeff)])
+                features.extend([
+                    np.mean(coeff),         # Mean
+                    np.std(coeff),          # Standard deviation
+                    np.var(coeff),          # Variance
+                    np.sum(np.square(coeff))  # Energy (sum of squares)
+                ])
             return np.array(features)
-        except Exception:
-            return np.zeros(20)  # Return 20 zeros (5 stats × 4 levels)
+        except Exception as e:
+            print(f"Error during wavelet feature extraction: {e}")
+            return np.zeros(4 * (level + 1))
 
-    def extract_features_from_windows(self, signal, window_size=200, stride=100):
-        """Extract features from signal windows"""
-        windows = self.create_windows(signal, window_size, stride)
+    def extract_features(self, signal, window_size=100, overlap=50):
+        """Extract features from the signal using overlapping windows"""
+        n_samples = len(signal)
         features = []
-        for window in windows:
-            window_features = self.wavelet_feature_engineering(window)
-            features.append(window_features)
+
+        for start in range(0, n_samples - window_size, window_size - overlap):
+            end = start + window_size
+            segment = signal[start:end]
+
+            # Extract features for each segment
+            feature_vector = self.wavelet_feature_engineering(segment)
+            features.append(feature_vector)
+
         return np.array(features)
 
     def get_best_parameters(self, model_type, X, y):
@@ -267,22 +168,6 @@ class EOGTaskPage(tk.Frame):
             }
             base_model = KNeighborsClassifier()
 
-        elif model_type == "SVM":
-            param_grid = {
-                'C': [0.1, 1, 10, 100],
-                'kernel': ['linear', 'rbf'],
-                'gamma': ['scale', 'auto', 0.1, 0.01]
-            }
-            base_model = SVC()
-
-        else:  # Decision Tree
-            param_grid = {
-                'max_depth': [None, 10, 20, 30],
-                'min_samples_split': [2, 5, 10],
-                'min_samples_leaf': [1, 2, 4]
-            }
-            base_model = DecisionTreeClassifier()
-
         grid_search = GridSearchCV(
             base_model,
             param_grid,
@@ -293,22 +178,23 @@ class EOGTaskPage(tk.Frame):
         grid_search.fit(X, y)
         return grid_search.best_estimator_
 
-    def run_model(self, model, model_name):
+    def run_model(self, model_name):
         """Train and test the model with cross-validation"""
         try:
             self.load_data_from_file()
             self.preprocess_data()
 
-            # Prepare features
-            train_left_features = self.extract_features_from_windows(self.data['train_left'])
-            train_right_features = self.extract_features_from_windows(self.data['train_right'])
-            test_left_features = self.extract_features_from_windows(self.data['test_left'])
-            test_right_features = self.extract_features_from_windows(self.data['test_right'])
+            # Extract features for each signal using overlapping windows
+            train_left_features = self.extract_features(self.data['train_left'])
+            train_right_features = self.extract_features(self.data['train_right'])
+            test_left_features = self.extract_features(self.data['test_left'])
+            test_right_features = self.extract_features(self.data['test_right'])
 
             # Combine features and create labels
             X_train = np.vstack([train_left_features, train_right_features])
             X_test = np.vstack([test_left_features, test_right_features])
 
+            # Create labels for the samples: 0 for train_left and 1 for train_right
             y_train = np.array([0] * len(train_left_features) + [1] * len(train_right_features))
             y_test = np.array([0] * len(test_left_features) + [1] * len(test_right_features))
 
@@ -316,13 +202,15 @@ class EOGTaskPage(tk.Frame):
             X_train_scaled = self.scaler.fit_transform(X_train)
             X_test_scaled = self.scaler.transform(X_test)
 
-            # Find best model parameters using cross-validation
-            best_model = self.get_best_parameters(model_name, X_train_scaled, y_train)
-
-            # Perform cross-validation
-            cv_scores = cross_val_score(best_model, X_train_scaled, y_train, cv=5)
+            # Use Leave-One-Out Cross-Validation (LOO-CV) for small datasets
+            loo = LeaveOneOut()
+            cv_scores = cross_val_score(
+                self.get_best_parameters(model_name, X_train_scaled, y_train),
+                X_train_scaled, y_train, cv=loo
+            )
 
             # Train the model with best parameters
+            best_model = self.get_best_parameters(model_name, X_train_scaled, y_train)
             best_model.fit(X_train_scaled, y_train)
 
             # Test the model
@@ -335,24 +223,53 @@ class EOGTaskPage(tk.Frame):
             # Display results
             self.result_text.delete(1.0, tk.END)
             self.result_text.insert(tk.END, f"{model_name} Model Results\n")
-            self.result_text.insert(tk.END, f"Best Parameters: {best_model.get_params()}\n\n")
-            self.result_text.insert(tk.END, f"Cross-validation scores: {cv_scores}\n")
+            #self.result_text.insert(tk.END, f"Best Parameters: {best_model.get_params()}\n\n")
+            #self.result_text.insert(tk.END, f"Cross-validation scores: {cv_scores}\n")
             self.result_text.insert(tk.END, f"Mean CV accuracy: {cv_scores.mean():.2f} (+/- {cv_scores.std() * 2:.2f})\n\n")
             self.result_text.insert(tk.END, f"Test Accuracy: {accuracy * 100:.2f}%\n")
             self.result_text.insert(tk.END, f"Classification Report:\n{report}")
+
+            # Plot signals
+            self.plot_signals()
 
         except Exception as e:
             self.result_text.delete(1.0, tk.END)
             self.result_text.insert(tk.END, f"Error: {str(e)}")
 
+    def plot_signals(self):
+        """Plot the left and right signals before and after preprocessing"""
+        self.plot_left.clear()
+        self.plot_right.clear()
+
+        # Plot the left signal
+        self.plot_left.plot(self.raw_data['train_left'], color='blue', label='Raw Left Signal')
+        self.plot_left.plot(self.data['train_left'], color='red', label='Processed Left Signal')
+
+        # Plot the right signal
+        self.plot_right.plot(self.raw_data['train_right'], color='green', label='Raw Right Signal')
+        self.plot_right.plot(self.data['train_right'], color='orange', label='Processed Right Signal')
+
+        self.plot_left.set_title("Left Signal (Raw vs Processed)")
+        self.plot_right.set_title("Right Signal (Raw vs Processed)")
+
+        # Add labels and legend
+        self.plot_left.set_xlabel("Samples")
+        self.plot_left.set_ylabel("Amplitude")
+        self.plot_right.set_xlabel("Samples")
+        self.plot_right.set_ylabel("Amplitude")
+        self.plot_left.legend()
+        self.plot_right.legend()
+
+        self.canvas.draw()
+
     def knn_model(self):
         """Train and test KNN model"""
-        self.run_model(KNeighborsClassifier(), "KNN")
+        self.run_model("KNN")
 
-    def svm_model(self):
-        """Train and test SVM model"""
-        self.run_model(SVC(), "SVM")
-
-    def tree_model(self):
-        """Train and test Decision Tree"""
-        self.run_model(DecisionTreeClassifier(), "Decision Tree")
+# Example usage
+if __name__ == "__main__":
+    root = tk.Tk()
+    root.title("EOG Task Page")
+    eog_task_page = EOGTaskPage(root, "EOG Signal Classification")
+    eog_task_page.pack(fill=tk.BOTH, expand=True)
+    root.mainloop()
