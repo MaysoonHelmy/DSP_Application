@@ -4,7 +4,7 @@ import numpy as np
 import pywt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
-from sklearn.model_selection import cross_val_score, GridSearchCV, LeaveOneOut
+from sklearn.model_selection import cross_val_score, GridSearchCV, StratifiedKFold
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score, classification_report
 from scipy.signal import butter, filtfilt
@@ -46,10 +46,10 @@ class EOGTaskPage(tk.Frame):
         self.result_text = tk.Text(top_frame, height=8, width=80, wrap=tk.WORD, font=("Helvetica", 12))
         self.result_text.pack(pady=10, fill=tk.X)
 
-        # Create figure with two subplots
-        self.figure = Figure(figsize=(10, 4))  # Adjust figure size
-        self.plot_left = self.figure.add_subplot(121)  # Left plot
-        self.plot_right = self.figure.add_subplot(122)  # Right plot
+        # Create figure with two subplots vertically stacked
+        self.figure = Figure(figsize=(10, 8))  # Adjust figure size for vertical layout
+        self.plot_top = self.figure.add_subplot(211)  # Top plot for raw signal
+        self.plot_bottom = self.figure.add_subplot(212)  # Bottom plot for processed signal
         self.canvas = FigureCanvasTkAgg(self.figure, bottom_frame)
         self.canvas_widget = self.canvas.get_tk_widget()
         self.canvas_widget.pack(fill=tk.BOTH, expand=True)
@@ -108,40 +108,51 @@ class EOGTaskPage(tk.Frame):
         return (signal - min_val) / (max_val - min_val)
 
     def preprocess_data(self):
-        """Preprocess data: bandpass filter and normalize"""
+        """Preprocess data: remove DC component, bandpass filter, and normalize."""
         try:
+            # Remove DC component (mean of the signal)
+            for key in self.data:
+                signal = self.data[key]
+                if signal.size > 0:
+                    # Remove the mean to eliminate DC component
+                    self.data[key] = signal - np.mean(signal)
+
+            # Bandpass filter setup
             lowcut = 0.5
             highcut = 50.0
             fs = 1000
             b, a = self.butter_bandpass(lowcut, highcut, fs)
 
+            # Apply the bandpass filter and normalize the signal
             for key in self.data:
                 signal = self.data[key]
                 if signal.size > 0:
                     filtered_signal = self.apply_bandpass_filter(signal, b, a)
                     self.data[key] = self.normalize_signal(filtered_signal)
+
         except Exception as e:
             print(f"Error during preprocessing: {e}")
 
-    def wavelet_feature_engineering(self, signal, wavelet='db4', level=2):
-        """Perform wavelet feature extraction using mean, std, var, and energy"""
+    def wavelet_feature_engineering(self, signal, wavelet='db4', level=4):
+        """Perform wavelet feature extraction with enhanced depth and additional features."""
         if signal.size == 0:
-            return np.zeros(4 * (level + 1))
+            return np.zeros(5 * (level + 1))
 
         try:
             coeffs = pywt.wavedec(signal, wavelet, level=level)
             features = []
             for coeff in coeffs:
                 features.extend([
-                    np.mean(coeff),         # Mean
-                    np.std(coeff),          # Standard deviation
-                    np.var(coeff),          # Variance
-                    np.sum(np.square(coeff))  # Energy (sum of squares)
+                    np.mean(coeff),            # Mean
+                    np.std(coeff),             # Standard deviation
+                    np.var(coeff),             # Variance
+                    np.sum(np.square(coeff)),  # Energy (sum of squares)
+                    np.max(coeff) - np.min(coeff)  # Range
                 ])
             return np.array(features)
         except Exception as e:
             print(f"Error during wavelet feature extraction: {e}")
-            return np.zeros(4 * (level + 1))
+            return np.zeros(5 * (level + 1))
 
     def extract_features(self, signal, window_size=100, overlap=50):
         """Extract features from the signal using overlapping windows"""
@@ -179,7 +190,7 @@ class EOGTaskPage(tk.Frame):
         return grid_search.best_estimator_
 
     def run_model(self, model_name):
-        """Train and test the model with cross-validation"""
+        """Train and test the model with improved strategies."""
         try:
             self.load_data_from_file()
             self.preprocess_data()
@@ -202,15 +213,28 @@ class EOGTaskPage(tk.Frame):
             X_train_scaled = self.scaler.fit_transform(X_train)
             X_test_scaled = self.scaler.transform(X_test)
 
-            # Use Leave-One-Out Cross-Validation (LOO-CV) for small datasets
-            loo = LeaveOneOut()
-            cv_scores = cross_val_score(
-                self.get_best_parameters(model_name, X_train_scaled, y_train),
-                X_train_scaled, y_train, cv=loo
-            )
+            # Use StratifiedKFold for cross-validation
+            skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
-            # Train the model with best parameters
-            best_model = self.get_best_parameters(model_name, X_train_scaled, y_train)
+            base_model = KNeighborsClassifier()
+            param_grid = {
+                'n_neighbors': list(range(3, 15)),
+                'weights': ['uniform', 'distance'],
+                'metric': ['euclidean', 'manhattan']
+            }
+
+            # Use GridSearchCV for hyperparameter tuning
+            grid_search = GridSearchCV(
+                base_model,
+                param_grid,
+                cv=skf,
+                scoring='accuracy',
+                n_jobs=-1
+            )
+            grid_search.fit(X_train_scaled, y_train)
+
+            # Train the best model
+            best_model = grid_search.best_estimator_
             best_model.fit(X_train_scaled, y_train)
 
             # Test the model
@@ -223,9 +247,6 @@ class EOGTaskPage(tk.Frame):
             # Display results
             self.result_text.delete(1.0, tk.END)
             self.result_text.insert(tk.END, f"{model_name} Model Results\n")
-            #self.result_text.insert(tk.END, f"Best Parameters: {best_model.get_params()}\n\n")
-            #self.result_text.insert(tk.END, f"Cross-validation scores: {cv_scores}\n")
-            self.result_text.insert(tk.END, f"Mean CV accuracy: {cv_scores.mean():.2f} (+/- {cv_scores.std() * 2:.2f})\n\n")
             self.result_text.insert(tk.END, f"Test Accuracy: {accuracy * 100:.2f}%\n")
             self.result_text.insert(tk.END, f"Classification Report:\n{report}")
 
@@ -238,38 +259,30 @@ class EOGTaskPage(tk.Frame):
 
     def plot_signals(self):
         """Plot the left and right signals before and after preprocessing"""
-        self.plot_left.clear()
-        self.plot_right.clear()
+        self.plot_top.clear()
+        self.plot_bottom.clear()
 
         # Plot the left signal
-        self.plot_left.plot(self.raw_data['train_left'], color='blue', label='Raw Left Signal')
-        self.plot_left.plot(self.data['train_left'], color='red', label='Processed Left Signal')
+        self.plot_top.plot(self.raw_data['train_left'], color='blue', label='Raw Left Signal')
+        self.plot_bottom.plot(self.data['train_left'], color='red', label='Processed Left Signal')
 
         # Plot the right signal
-        self.plot_right.plot(self.raw_data['train_right'], color='green', label='Raw Right Signal')
-        self.plot_right.plot(self.data['train_right'], color='orange', label='Processed Right Signal')
+        self.plot_top.plot(self.raw_data['train_right'], color='green', label='Raw Right Signal')
+        self.plot_bottom.plot(self.data['train_right'], color='orange', label='Processed Right Signal')
 
-        self.plot_left.set_title("Left Signal (Raw vs Processed)")
-        self.plot_right.set_title("Right Signal (Raw vs Processed)")
+        self.plot_top.set_title("Raw Signals")
+        self.plot_bottom.set_title("Processed Signals")
 
         # Add labels and legend
-        self.plot_left.set_xlabel("Samples")
-        self.plot_left.set_ylabel("Amplitude")
-        self.plot_right.set_xlabel("Samples")
-        self.plot_right.set_ylabel("Amplitude")
-        self.plot_left.legend()
-        self.plot_right.legend()
+        self.plot_top.set_xlabel("Samples")
+        self.plot_top.set_ylabel("Amplitude")
+        self.plot_bottom.set_xlabel("Samples")
+        self.plot_bottom.set_ylabel("Amplitude")
+        self.plot_top.legend()
+        self.plot_bottom.legend()
 
         self.canvas.draw()
 
     def knn_model(self):
         """Train and test KNN model"""
         self.run_model("KNN")
-
-# Example usage
-if __name__ == "__main__":
-    root = tk.Tk()
-    root.title("EOG Task Page")
-    eog_task_page = EOGTaskPage(root, "EOG Signal Classification")
-    eog_task_page.pack(fill=tk.BOTH, expand=True)
-    root.mainloop()
