@@ -41,11 +41,6 @@ Fourier analysis is computed manually without built in FFT functions
 Results are displayed with three significant figures
 The project is actively maintained at GitHub Repository httpsgithubcomMaysoonHelmyDSPApplicationtreemain
 
-Contribution
-Feel free to contribute by submitting issues or pull requests
-
-License
-This project is licensed under the MIT License
 
 
 
